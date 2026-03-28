@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import copy
-import io
 import json
 import os
 import warnings
@@ -76,7 +74,6 @@ from litellm.utils import (
     supports_vision,
     token_counter,
 )
-from PIL import Image
 
 from openhands.sdk.llm.exceptions import (
     LLMContextWindowTooSmallError,
@@ -87,7 +84,6 @@ from openhands.sdk.llm.exceptions import (
 # OpenHands utilities
 from openhands.sdk.llm.llm_response import LLMResponse
 from openhands.sdk.llm.message import (
-    ImageContent,
     Message,
 )
 from openhands.sdk.llm.mixins.non_native_fc import NonNativeToolCallingMixin
@@ -96,6 +92,7 @@ from openhands.sdk.llm.options.responses_options import select_responses_options
 from openhands.sdk.llm.streaming import (
     TokenCallbackType,
 )
+from openhands.sdk.llm.utils.image_resize import maybe_resize_messages_for_provider
 from openhands.sdk.llm.utils.litellm_provider import infer_litellm_provider
 from openhands.sdk.llm.utils.metrics import Metrics, MetricsSnapshot
 from openhands.sdk.llm.utils.model_features import get_features
@@ -132,8 +129,6 @@ ENV_ALLOW_SHORT_CONTEXT_WINDOWS: Final[str] = "ALLOW_SHORT_CONTEXT_WINDOWS"
 # This cap prevents requesting output that exceeds the context window.
 # 16384 is a safe default that works for most models (GPT-4o: 16k, Claude: 8k).
 DEFAULT_MAX_OUTPUT_TOKENS_CAP: Final[int] = 16384
-ANTHROPIC_MANY_IMAGE_THRESHOLD: Final[int] = 20
-ANTHROPIC_MANY_IMAGE_MAX_DIMENSION: Final[int] = 2000
 
 
 class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
@@ -1350,83 +1345,6 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
                 ].cache_prompt = True  # Last item inside the message content
                 break
 
-    def _apply_outgoing_image_resize(
-        self, messages: list[Message], *, vision_enabled: bool
-    ) -> None:
-        max_dimension = self._get_outgoing_image_max_dimension(
-            messages=messages, vision_enabled=vision_enabled
-        )
-        if max_dimension is None:
-            return
-
-        for message in messages:
-            for content_item in message.content:
-                if isinstance(content_item, ImageContent):
-                    content_item.image_urls = [
-                        self._resize_base64_data_image_url(
-                            url, max_dimension=max_dimension
-                        )
-                        for url in content_item.image_urls
-                    ]
-
-    def _get_outgoing_image_max_dimension(
-        self, messages: list[Message], *, vision_enabled: bool
-    ) -> int | None:
-        if not vision_enabled or self._infer_litellm_provider() != "anthropic":
-            return None
-
-        total_images = sum(
-            len(content_item.image_urls)
-            for message in messages
-            for content_item in message.content
-            if isinstance(content_item, ImageContent)
-        )
-        if total_images <= ANTHROPIC_MANY_IMAGE_THRESHOLD:
-            return None
-
-        return ANTHROPIC_MANY_IMAGE_MAX_DIMENSION
-
-    @staticmethod
-    def _resize_base64_data_image_url(url: str, *, max_dimension: int) -> str:
-        if not url.startswith("data:image/"):
-            return url
-
-        header, sep, encoded = url.partition(";base64,")
-        if not sep:
-            return url
-
-        mime_type = header.removeprefix("data:")
-
-        try:
-            raw_bytes = base64.b64decode(encoded)
-            with Image.open(io.BytesIO(raw_bytes)) as image:
-                if max(image.size) <= max_dimension:
-                    return url
-
-                resized_image = image.copy()
-                resized_image.thumbnail(
-                    (max_dimension, max_dimension), Image.Resampling.LANCZOS
-                )
-                image_format = image.format or mime_type.split("/", 1)[1].upper()
-
-            if image_format == "JPG":
-                image_format = "JPEG"
-
-            if image_format == "JPEG" and resized_image.mode not in ("RGB", "L"):
-                resized_image = resized_image.convert("RGB")
-
-            buffer = io.BytesIO()
-            resized_image.save(buffer, format=image_format)
-        except Exception:
-            logger.warning(
-                "Failed to resize base64 data image for outgoing LLM request",
-                exc_info=True,
-            )
-            return url
-
-        resized_encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        return f"data:{mime_type};base64,{resized_encoded}"
-
     def format_messages_for_llm(self, messages: list[Message]) -> list[dict]:
         """Formats Message objects for LLM consumption."""
 
@@ -1445,7 +1363,11 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         )
         send_reasoning_content = model_features.send_reasoning_content
 
-        self._apply_outgoing_image_resize(messages, vision_enabled=vision_enabled)
+        maybe_resize_messages_for_provider(
+            messages,
+            provider=self._infer_litellm_provider(),
+            vision_enabled=vision_enabled,
+        )
 
         formatted_messages = [
             message.to_chat_dict(

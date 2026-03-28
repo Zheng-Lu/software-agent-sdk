@@ -66,8 +66,8 @@ def test_anthropic_many_image_requests_resize_base64_images():
     assert original_content.image_urls[0] == original_url
 
 
-def test_anthropic_exactly_twenty_images_do_not_resize():
-    original_url = _make_png_data_url(2400, 1200)
+def test_anthropic_exactly_twenty_images_use_standard_limit():
+    original_url = _make_png_data_url(8001, 400)
     message = Message(
         role="user",
         content=[
@@ -85,7 +85,7 @@ def test_anthropic_exactly_twenty_images_do_not_resize():
 
     image_urls = _image_urls_from_chat_message(formatted[0])
     assert len(image_urls) == 20
-    assert _data_url_dimensions(image_urls[0]) == (2400, 1200)
+    assert _data_url_dimensions(image_urls[0]) == (8000, 400)
 
 
 def test_anthropic_single_image_requests_do_not_resize():
@@ -110,6 +110,27 @@ def test_anthropic_single_image_requests_do_not_resize():
     assert _data_url_dimensions(image_urls[0]) == (2400, 2400)
 
 
+def test_anthropic_single_image_requests_resize_above_standard_limit():
+    original_url = _make_png_data_url(8001, 400)
+    message = Message(
+        role="user",
+        content=[
+            TextContent(text="Describe this image."),
+            ImageContent(image_urls=[original_url]),
+        ],
+    )
+    llm = LLM(
+        model="anthropic/claude-opus-4-6",
+        api_key=SecretStr("test-key"),
+        usage_id="test-anthropic-single-image-large",
+    )
+
+    formatted = _format_for_provider(llm, [message], provider="anthropic")
+
+    image_urls = _image_urls_from_chat_message(formatted[0])
+    assert _data_url_dimensions(image_urls[0]) == (8000, 400)
+
+
 def test_anthropic_many_image_requests_leave_url_images_unchanged():
     image_url = "https://example.com/image.png"
     message = Message(
@@ -128,3 +149,25 @@ def test_anthropic_many_image_requests_leave_url_images_unchanged():
     formatted = _format_for_provider(llm, [message], provider="anthropic")
 
     assert _image_urls_from_chat_message(formatted[0]) == [image_url] * 21
+
+
+def test_non_anthropic_many_image_requests_do_not_resize():
+    original_url = _make_png_data_url(2400, 1200)
+    message = Message(
+        role="user",
+        content=[
+            TextContent(text="Describe these images."),
+            ImageContent(image_urls=[original_url] * 25),
+        ],
+    )
+    llm = LLM(
+        model="gpt-4o",
+        api_key=SecretStr("test-key"),
+        usage_id="test-openai-many-image",
+    )
+
+    formatted = _format_for_provider(llm, [message], provider="openai")
+
+    image_urls = _image_urls_from_chat_message(formatted[0])
+    assert len(image_urls) == 25
+    assert _data_url_dimensions(image_urls[0]) == (2400, 1200)
