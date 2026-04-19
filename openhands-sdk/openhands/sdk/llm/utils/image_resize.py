@@ -4,6 +4,8 @@ import base64
 import copy
 import io
 
+from PIL import Image
+
 from openhands.sdk.llm.message import ImageContent, Message
 from openhands.sdk.logger import get_logger
 
@@ -29,15 +31,6 @@ def maybe_resize_messages_for_provider(
         vision_enabled=vision_enabled,
     )
     if max_dimension is None:
-        return messages
-
-    try:
-        from PIL import Image  # noqa: F401
-    except ImportError:
-        logger.warning(
-            "pillow is not installed; skipping Anthropic image resizing. "
-            "Install openhands-sdk[pillow] to enable base64 image downscaling."
-        )
         return messages
 
     resized_messages = copy.deepcopy(messages)
@@ -82,8 +75,6 @@ def _resize_base64_data_url(url: str, *, max_dimension: int) -> str:
     mime_type = header.removeprefix("data:")
 
     try:
-        from PIL import Image
-
         raw_bytes = base64.b64decode(encoded)
         with Image.open(io.BytesIO(raw_bytes)) as image:
             if max(image.size) <= max_dimension:
