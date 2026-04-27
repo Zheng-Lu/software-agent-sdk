@@ -30,6 +30,7 @@ from openhands.sdk.utils.pydantic_secrets import serialize_secret, validate_secr
 
 if TYPE_CHECKING:  # type hints only, avoid runtime import cycle
     from openhands.sdk.llm.auth import SupportedVendor
+    from openhands.sdk.llm.auth.openai import OpenAIAuthMethod
     from openhands.sdk.tool.tool import ToolDefinition
 
 from openhands.sdk.llm.auth.openai import transform_for_subscription
@@ -778,7 +779,10 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
                 f"for model {self.model}"
             )
             formatted_messages, kwargs = self.pre_request_prompt_mock(
-                formatted_messages, cc_tools or [], kwargs
+                formatted_messages,
+                cc_tools or [],
+                kwargs,
+                include_security_params=add_security_risk_prediction,
             )
 
         # 3) normalize provider params
@@ -827,7 +831,10 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             if use_mock_tools:
                 raw_resp = copy.deepcopy(resp)
                 resp = self.post_response_prompt_mock(
-                    resp, nonfncall_msgs=formatted_messages, tools=cc_tools
+                    resp,
+                    nonfncall_msgs=formatted_messages,
+                    tools=cc_tools,
+                    include_security_params=add_security_risk_prediction,
                 )
             # 6) telemetry
             self._telemetry.on_response(resp, raw_resp=raw_resp)
@@ -1584,6 +1591,7 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         model: str,
         force_login: bool = False,
         open_browser: bool = True,
+        auth_method: OpenAIAuthMethod = "browser",
         **llm_kwargs,
     ) -> LLM:
         """Authenticate with a subscription service and return an LLM instance.
@@ -1610,6 +1618,7 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
                 credentials exist.
             open_browser: Whether to automatically open the browser for the
                 OAuth login flow.
+            auth_method: Login method to use: "browser" or "device_code".
             **llm_kwargs: Additional arguments to pass to the LLM constructor.
 
         Returns:
@@ -1637,5 +1646,6 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             model=model,
             force_login=force_login,
             open_browser=open_browser,
+            auth_method=auth_method,
             **llm_kwargs,
         )
