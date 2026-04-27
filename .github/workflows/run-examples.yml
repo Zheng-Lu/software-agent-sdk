@@ -34,6 +34,7 @@ jobs:
                   check-name: Build & Push (python-amd64)
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
                   wait-interval: 10
+                  fail-on-no-checks: false
 
             - name: Checkout
               uses: actions/checkout@v6
