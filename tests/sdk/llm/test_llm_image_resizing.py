@@ -91,6 +91,33 @@ def test_anthropic_many_image_requests_resize_base64_images():
     assert original_content.image_urls[0] == original_url
 
 
+def test_proxy_anthropic_many_image_requests_use_model_info_provider():
+    original_url = _make_png_data_url(2400, 1200)
+    message = Message(
+        role="user",
+        content=[
+            TextContent(text="Describe these images."),
+            ImageContent(image_urls=[original_url] * 21),
+        ],
+    )
+    llm = LLM(
+        model="litellm_proxy/claude-opus-4-6",
+        api_key=SecretStr("test-key"),
+        usage_id="test-proxy-anthropic-many-image",
+    )
+    llm._model_info = {"litellm_provider": "anthropic"}
+
+    with (
+        patch.object(LLM, "vision_is_active", return_value=True),
+        patch.object(LLM, "_infer_litellm_provider", return_value="litellm_proxy"),
+    ):
+        formatted = llm.format_messages_for_llm([message])
+
+    image_urls = _image_urls_from_chat_message(formatted[0])
+    assert len(image_urls) == 21
+    assert _data_url_dimensions(image_urls[0]) == (2000, 1000)
+
+
 def test_anthropic_exactly_twenty_images_use_standard_limit():
     original_url = _make_png_data_url(8001, 400)
     message = Message(

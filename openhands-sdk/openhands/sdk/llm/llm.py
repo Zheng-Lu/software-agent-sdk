@@ -1102,6 +1102,14 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         self._litellm_provider = provider
         return provider
 
+    def _infer_model_info_provider(self) -> str | None:
+        if self._model_info is not None:
+            provider = self._model_info.get("litellm_provider")
+            if isinstance(provider, str) and provider:
+                return provider
+
+        return self._infer_litellm_provider()
+
     def _get_litellm_api_key_value(self) -> str | None:
         api_key_value: str | None = None
         if self.api_key:
@@ -1417,7 +1425,7 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
 
         messages = maybe_resize_messages_for_provider(
             messages,
-            provider=self._infer_litellm_provider(),
+            provider=self._infer_model_info_provider(),
             vision_enabled=vision_enabled,
         )
 
