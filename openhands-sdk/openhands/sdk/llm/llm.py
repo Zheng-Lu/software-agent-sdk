@@ -24,7 +24,6 @@ from pydantic.json_schema import SkipJsonSchema
 from openhands.sdk.llm.fallback_strategy import FallbackStrategy
 from openhands.sdk.llm.utils.model_info import get_litellm_model_info
 from openhands.sdk.settings.metadata import SettingProminence, field_meta
-from openhands.sdk.utils.deprecation import warn_deprecated
 from openhands.sdk.utils.pydantic_secrets import serialize_secret, validate_secret
 
 
@@ -392,14 +391,6 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         default=None,
         description="The seed to use for random number generation.",
     )
-    safety_settings: list[dict[str, str]] | None = Field(
-        default=None,
-        deprecated=("Deprecated since v1.15.0 and scheduled for removal in v1.20.0."),
-        description=(
-            "No-op. Safety settings are no longer applied. "
-            "Deprecated since v1.15.0 and scheduled for removal in v1.20.0."
-        ),
-    )
     usage_id: str = Field(
         default="default",
         serialization_alias="usage_id",
@@ -461,20 +452,6 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
     # =========================================================================
     # Validators
     # =========================================================================
-    @field_validator("safety_settings", mode="before")
-    @classmethod
-    def _warn_safety_settings_deprecated(
-        cls, v: list[dict[str, str]] | None
-    ) -> list[dict[str, str]] | None:
-        if v is not None:
-            warn_deprecated(
-                "LLM.safety_settings",
-                deprecated_in="1.15.0",
-                removed_in="1.20.0",
-                details="Safety settings are no longer applied.",
-            )
-        return v
-
     @field_validator(
         "api_key", "aws_access_key_id", "aws_secret_access_key", "aws_session_token"
     )
@@ -505,6 +482,13 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
             # Use `or` instead of dict.get() to handle explicit None values
             d["base_url"] = d.get("base_url") or "https://llm-proxy.app.all-hands.dev/"
 
+        # Fix base_url for direct OpenAI - API expects /v1 suffix
+        # If base_url is "https://api.openai.com", set to None to use LiteLLM default
+        if model_val.startswith("openai/"):
+            base = d.get("base_url")
+            if base == "https://api.openai.com" or base == "https://api.openai.com/":
+                d["base_url"] = None  # Let LiteLLM use its default which includes /v1
+
         return d
 
     @model_validator(mode="after")
@@ -527,18 +511,22 @@ class LLM(BaseModel, RetryMixin, NonNativeToolCallingMixin):
         if self.aws_region_name:
             os.environ["AWS_REGION_NAME"] = self.aws_region_name
 
-        # Metrics + Telemetry wiring
+        # Metrics + Telemetry wiring. Guard both: this validator re-runs whenever
+        # the LLM is passed into another Pydantic model (e.g. RegistryEvent),
+        # and replacing _telemetry would silently drop any callback callers
+        # have attached via telemetry.set_*_callback().
         if self._metrics is None:
             self._metrics = Metrics(model_name=self.model)
 
-        self._telemetry = Telemetry(
-            model_name=self.model,
-            log_enabled=self.log_completions,
-            log_dir=self.log_completions_folder if self.log_completions else None,
-            input_cost_per_token=self.input_cost_per_token,
-            output_cost_per_token=self.output_cost_per_token,
-            metrics=self._metrics,
-        )
+        if self._telemetry is None:
+            self._telemetry = Telemetry(
+                model_name=self.model,
+                log_enabled=self.log_completions,
+                log_dir=self.log_completions_folder if self.log_completions else None,
+                input_cost_per_token=self.input_cost_per_token,
+                output_cost_per_token=self.output_cost_per_token,
+                metrics=self._metrics,
+            )
 
         # Tokenizer
         if self.custom_tokenizer:
