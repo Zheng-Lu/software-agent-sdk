@@ -52,6 +52,7 @@ class SkillInfo(BaseModel):
     source: str | None = None
     description: str | None = None
     is_agentskills_format: bool = False
+    disable_model_invocation: bool = False
 
 
 class SkillResources(BaseModel):
@@ -212,7 +213,7 @@ class Skill(BaseModel):
         default=False,
         description=(
             "Whether this skill can only be activated by trigger matching and "
-            "cannot be directly invoked via invoke_skill."
+            "should not be advertised to the model for direct invocation."
         ),
     )
     resources: SkillResources | None = Field(
@@ -643,6 +644,7 @@ class Skill(BaseModel):
             source=self.source,
             description=self.description,
             is_agentskills_format=self.is_agentskills_format,
+            disable_model_invocation=self.disable_model_invocation,
         )
 
     def render_content(

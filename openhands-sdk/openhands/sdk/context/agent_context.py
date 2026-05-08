@@ -219,10 +219,7 @@ class AgentContext(BaseModel):
         repo_skills: list[Skill] = []
         available_skills: list[Skill] = []
         for s in self.skills:
-            if s.is_agentskills_format:
-                if not s.disable_model_invocation:
-                    available_skills.append(s)
-            elif s.trigger is not None:
+            if s.is_agentskills_format or s.trigger is not None:
                 if not s.disable_model_invocation:
                     available_skills.append(s)
             else:
