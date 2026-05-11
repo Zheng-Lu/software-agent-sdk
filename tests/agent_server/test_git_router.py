@@ -1,5 +1,6 @@
 """Tests for git_router.py endpoints."""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -138,6 +139,89 @@ async def test_git_diff_returns_empty_diff_when_path_is_not_git_repo(client):
         body = response.json()
         assert body["modified"] is None
         assert body["original"] is None
+
+
+@pytest.mark.asyncio
+async def test_git_changes_query_param_ref_head_on_empty_repo_returns_200(
+    client, tmp_path
+):
+    """End-to-end: ``?ref=HEAD`` on a freshly init'd repo must return 200.
+
+    Real git repo (no mock) so the SDK fix is exercised through the router.
+    Reproduces the bug: before the fix this returned 400 with
+    ``Git command failed: git --no-pager rev-parse --verify 'HEAD^{commit}'``.
+    """
+    # Arrange: real empty git repo with a single untracked file.
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    (tmp_path / "untracked.txt").write_text("new")
+
+    # Act
+    response = client.get(
+        "/api/git/changes",
+        params={"path": str(tmp_path), "ref": "HEAD"},
+    )
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json() == [{"status": "ADDED", "path": "untracked.txt"}]
+
+
+@pytest.mark.asyncio
+async def test_git_changes_query_param_ref_head_on_orphan_branch_returns_200(
+    client, tmp_path
+):
+    """End-to-end: ``?ref=HEAD`` on an orphan branch must return 200.
+
+    Real git repo (no mock) so the SDK fix is exercised through the router.
+    The repo has a commit on ``main``, but HEAD is currently pointing at an
+    unborn orphan branch — exactly the user-reported state that surfaced as
+    ``400 Bad Request: Git command failed: git --no-pager rev-parse --verify
+    'HEAD^{commit}'`` in the Changes tab. The earlier ``_repo_has_commits``
+    short-circuit doesn't catch this case (commits exist on main), so the
+    fix has to come from the ``rev-parse`` failure handler instead.
+    """
+
+    # Arrange: repo with one commit on main, then switch to an orphan branch.
+    def run_git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+    (tmp_path / "committed.txt").write_text("on main")
+    run_git("add", ".")
+    run_git("commit", "-m", "on main")
+    run_git("checkout", "--orphan", "orphan")
+    run_git("rm", "-rf", "--cached", ".")
+    (tmp_path / "untracked.txt").write_text("new")
+
+    # Act
+    response = client.get(
+        "/api/git/changes",
+        params={"path": str(tmp_path), "ref": "HEAD"},
+    )
+
+    # Assert
+    assert response.status_code == 200
+    paths = {entry["path"] for entry in response.json()}
+    assert "untracked.txt" in paths
 
 
 @pytest.mark.asyncio
